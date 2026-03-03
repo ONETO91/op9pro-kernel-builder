@@ -64,31 +64,33 @@ jobs:
       # 3. TOOLCHAIN — AOSP Clang 11 (r383902b1)
       #    Matches stock: "clang version 11.0.2"
       #    Build ID: 6877366 based on r383902b1
+      #
+      #    Uses GitHub mirrors (git clone --depth=1)
+      #    instead of AOSP +archive URLs which are
+      #    unreliable and return HTML 404 pages.
       # ─────────────────────────────────────────────
-      - name: Download AOSP Clang 11 toolchain
+      - name: Clone AOSP Clang 11 (r383902b1) from GitHub mirror
         run: |
-          mkdir -p $GITHUB_WORKSPACE/toolchain/clang
-          # AOSP Clang r383902b1 (clang-11.0.2) — exact stock match
-          CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android11-release/clang-r383902b1.tar.gz"
-          echo "==> Downloading AOSP Clang 11 (r383902b1)..."
-          curl -sSL "$CLANG_URL" | tar -xzf - -C $GITHUB_WORKSPACE/toolchain/clang
-          # Verify
+          echo "==> Cloning AOSP Clang 11.0.2 (r383902b1) — exact stock toolchain match..."
+          git clone --depth=1 \
+            https://github.com/anrui2032/android_prebuilts_clang_host_linux-x86_clang-r383902b1.git \
+            $GITHUB_WORKSPACE/toolchain/clang
+          # Verify the clang binary
           $GITHUB_WORKSPACE/toolchain/clang/bin/clang --version
 
-      - name: Download GCC aarch64 cross-compiler
+      - name: Clone GCC aarch64 cross-compiler from LineageOS mirror
         run: |
-          mkdir -p $GITHUB_WORKSPACE/toolchain/gcc-aarch64
-          # AOSP GCC 4.9 aarch64 — standard companion for AOSP Clang builds
-          GCC_URL="https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/heads/android11-release.tar.gz"
-          echo "==> Downloading GCC aarch64 4.9..."
-          curl -sSL "$GCC_URL" | tar -xzf - -C $GITHUB_WORKSPACE/toolchain/gcc-aarch64
+          echo "==> Cloning GCC 4.9 aarch64 cross-compiler..."
+          git clone --depth=1 -b lineage-19.1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
+            $GITHUB_WORKSPACE/toolchain/gcc-aarch64
 
-      - name: Download GCC arm32 cross-compiler (for compat vDSO)
+      - name: Clone GCC arm32 cross-compiler (for compat vDSO)
         run: |
-          mkdir -p $GITHUB_WORKSPACE/toolchain/gcc-arm32
-          GCC32_URL="https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/refs/heads/android11-release.tar.gz"
-          echo "==> Downloading GCC arm32 4.9..."
-          curl -sSL "$GCC32_URL" | tar -xzf - -C $GITHUB_WORKSPACE/toolchain/gcc-arm32
+          echo "==> Cloning GCC 4.9 arm32 cross-compiler..."
+          git clone --depth=1 -b lineage-19.1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
+            $GITHUB_WORKSPACE/toolchain/gcc-arm32
 
       # ─────────────────────────────────────────────
       # 4. PREPARE DEFCONFIG
