@@ -167,6 +167,20 @@ jobs:
             ln -sfn "$DT_SRC/vendor" "$WORKSPACE_GRANDPARENT/vendor" 2>/dev/null || true
           fi
 
+          echo "==> Creating kernel/msm-5.4 symlinks for vendor relative includes..."
+          # OnePlus vendor files often have `#include <../../../../kernel/msm-5.4/mm/internal.h>`
+          # We must make sure kernel/msm-5.4 points to our actual kernel_source
+          mkdir -p "$GITHUB_WORKSPACE/kernel"
+          ln -sfn "$KERNEL_SRC" "$GITHUB_WORKSPACE/kernel/msm-5.4"
+
+          mkdir -p "$DT_SRC/kernel"
+          ln -sfn "$KERNEL_SRC" "$DT_SRC/kernel/msm-5.4"
+
+          if [ -n "$WORKSPACE_PARENT" ]; then
+            mkdir -p "$WORKSPACE_PARENT/kernel"
+            ln -sfn "$KERNEL_SRC" "$WORKSPACE_PARENT/kernel/msm-5.4" 2>/dev/null || true
+          fi
+
           # Verify symlinks resolved
           broken=$(find "$KERNEL_SRC" -type l ! -exec test -e {} \; -print 2>/dev/null || true)
           if [ -z "$broken" ]; then
