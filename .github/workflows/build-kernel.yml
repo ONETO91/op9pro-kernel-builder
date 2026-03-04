@@ -124,11 +124,13 @@ jobs:
       # ─────────────────────────────────────────────
       # 4. RESOLVE OPLUS VENDOR SYMLINKS
       #    The kernel source contains broken symlinks
-      #    (sched_assist, sigkill_diagnosis, special_opt,
-      #    tuning, uad, etc.) that point to relative paths
-      #    like ../../vendor/oplus/kernel/<name>.
-      #    These vendor sources live in the device tree repo.
-      #    We must resolve them before building.
+      #    pointing to vendor/oplus/kernel/* paths via
+      #    relative ../../.. references. These vendor
+      #    sources live in the device tree repo.
+      #
+      #    Example symlink targets:
+      #    kernel/sched_assist -> ../../../vendor/oplus/kernel/oplus_performance/sched_assist/
+      #    kernel/tuning       -> ../../../vendor/oplus/kernel/oplus_performance/tuning/
       # ─────────────────────────────────────────────
       - name: Resolve OPlus vendor symlinks
         run: |
@@ -136,7 +138,6 @@ jobs:
           DT_SRC="$GITHUB_WORKSPACE/kernel_modules_devicetree"
 
           echo "==> Finding broken symlinks in kernel source..."
-          # Find all broken symlinks in the kernel source
           broken_links=$(find "$KERNEL_SRC" -type l ! -exec test -e {} \; -print 2>/dev/null || true)
 
           if [ -z "$broken_links" ]; then
@@ -144,35 +145,43 @@ jobs:
           else
             echo "==> Found broken symlinks:"
             echo "$broken_links"
+            echo ""
+
+            resolved=0
+            removed=0
 
             for link in $broken_links; do
               target=$(readlink "$link")
-              echo "  Symlink: $link -> $target"
 
-              # The symlinks typically point to ../../vendor/oplus/kernel/<name>
-              # We need to resolve this relative to the device tree repo
-              # Extract the vendor-relative path
-              vendor_rel=$(echo "$target" | sed 's|^\.\./\.\./||')
+              # Strip ALL leading ../ segments to get the vendor-relative path
+              # e.g. ../../../vendor/oplus/kernel/oplus_performance/sched_assist/
+              #   -> vendor/oplus/kernel/oplus_performance/sched_assist/
+              vendor_rel=$(echo "$target" | sed 's|\(\.\./\)*||')
+
+              echo "  Symlink: $link"
+              echo "    Target: $target"
+              echo "    Vendor path: $vendor_rel"
 
               if [ -d "$DT_SRC/$vendor_rel" ]; then
-                echo "    ==> Found in device tree: $DT_SRC/$vendor_rel"
+                echo "    ==> FOUND directory in device tree, copying..."
                 rm -f "$link"
                 cp -r "$DT_SRC/$vendor_rel" "$link"
-                echo "    ==> Copied successfully."
+                resolved=$((resolved + 1))
               elif [ -f "$DT_SRC/$vendor_rel" ]; then
-                echo "    ==> Found file in device tree: $DT_SRC/$vendor_rel"
+                echo "    ==> FOUND file in device tree, copying..."
                 rm -f "$link"
                 cp "$DT_SRC/$vendor_rel" "$link"
-                echo "    ==> Copied successfully."
+                resolved=$((resolved + 1))
               else
-                echo "    WARNING: Target not found in device tree: $DT_SRC/$vendor_rel"
-                echo "    ==> Removing broken symlink to prevent build errors."
+                echo "    WARNING: Not found in device tree, removing broken symlink."
                 rm -f "$link"
+                removed=$((removed + 1))
               fi
             done
-          fi
 
-          echo "==> Vendor symlink resolution complete."
+            echo ""
+            echo "==> Symlink resolution complete: $resolved resolved, $removed removed."
+          fi
 
       # ─────────────────────────────────────────────
       # 5. PREPARE DEFCONFIG
