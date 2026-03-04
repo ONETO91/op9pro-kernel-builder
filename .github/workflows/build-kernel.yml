@@ -24,30 +24,24 @@ jobs:
     steps:
       # ─────────────────────────────────────────────
       # 0. FREE DISK SPACE
-      #    GitHub runners have ~14GB free. We need space
-      #    for: Clang (~3.5GB), GCC (2x ~200MB), kernel
-      #    source (~2GB), device tree (~1.5GB), and build
-      #    output (~5-8GB). Remove preinstalled bloat.
+      #    GitHub runners have ~14GB free. Kernel build
+      #    with LTO needs ~10-15GB for output alone.
+      #    Aggressively remove preinstalled packages.
       # ─────────────────────────────────────────────
-      - name: Free disk space
+      - name: Maximize disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Show available disk space
         run: |
-          echo "==> Disk space BEFORE cleanup:"
-          df -h /
-          echo ""
-
-          # Remove large preinstalled packages
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo rm -rf /usr/local/share/boost
-          sudo rm -rf /usr/share/swift
-          sudo rm -rf /usr/local/.ghcup
-
-          # Remove Docker images
-          sudo docker image prune --all --force 2>/dev/null || true
-
-          echo "==> Disk space AFTER cleanup:"
+          echo "==> Disk space after cleanup:"
           df -h /
 
       # ─────────────────────────────────────────────
@@ -72,6 +66,14 @@ jobs:
           path: kernel_modules_devicetree
           fetch-depth: 1
 
+      # Remove .git from large repos to save disk space
+      - name: Clean up git metadata
+        run: |
+          rm -rf $GITHUB_WORKSPACE/kernel_source/.git
+          rm -rf $GITHUB_WORKSPACE/kernel_modules_devicetree/.git
+          echo "==> Removed .git dirs from source repos"
+          df -h /
+
       # ─────────────────────────────────────────────
       # 2. INSTALL HOST DEPENDENCIES
       # ─────────────────────────────────────────────
@@ -79,7 +81,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            bc bison build-essential ccache curl flex \
+            bc bison build-essential curl flex \
             git gnupg gperf lib32ncurses5-dev \
             lib32readline-dev lib32z1-dev libelf-dev \
             liblz4-tool libncurses5-dev \
@@ -91,99 +93,70 @@ jobs:
       # ─────────────────────────────────────────────
       # 3. TOOLCHAIN — AOSP Clang 11 (r383902b1)
       #    Matches stock: "clang version 11.0.2"
-      #    Build ID: 6877366 based on r383902b1
       #
-      #    IMPORTANT: clang-r383902b1 only exists on
-      #    android11-qpr3-release branch, NOT android11-release.
-      #    Using sparse-checkout to fetch only that directory.
+      #    Using GitHub mirror (clang-only repo) instead
+      #    of the massive AOSP sparse-checkout which
+      #    downloads >3GB of pack data.
       # ─────────────────────────────────────────────
-      - name: Fetch AOSP Clang 11 (r383902b1) via sparse-checkout
+      - name: Clone AOSP Clang 11 (r383902b1) from GitHub mirror
         run: |
-          echo "==> Fetching AOSP Clang 11.0.2 (r383902b1) from android11-qpr3-release..."
-          CLANG_BASE="$GITHUB_WORKSPACE/toolchain/clang"
-          mkdir -p "$CLANG_BASE"
-          cd "$CLANG_BASE"
-
-          git init
-          git remote add origin https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86
-
-          # Enable sparse-checkout — fetch ONLY clang-r383902b1/
-          git sparse-checkout init --no-cone
-          git sparse-checkout set "clang-r383902b1"
-
-          # Shallow fetch from android11-qpr3-release (the branch that has b1)
-          git fetch --depth=1 origin android11-qpr3-release
-          git checkout FETCH_HEAD
-
-          echo "==> Sparse-checkout complete."
-
-          # Remove .git to save disk space (~1-2GB of pack files)
-          rm -rf .git
-          echo "==> Cleaned up .git directory to save space."
+          echo "==> Cloning Clang 11.0.2 (r383902b1) from GitHub mirror..."
+          git clone --depth=1 \
+            https://github.com/anrui2032/android_prebuilts_clang_host_linux-x86_clang-r383902b1.git \
+            $GITHUB_WORKSPACE/toolchain/clang-r383902b1
+          rm -rf $GITHUB_WORKSPACE/toolchain/clang-r383902b1/.git
+          echo "==> Clone complete, .git removed."
 
       - name: Verify Clang toolchain
         run: |
-          CLANG_BIN="$GITHUB_WORKSPACE/toolchain/clang/clang-r383902b1/bin/clang"
+          CLANG_BIN="$GITHUB_WORKSPACE/toolchain/clang-r383902b1/bin/clang"
           echo "==> Verifying clang binary..."
 
           if [ ! -f "$CLANG_BIN" ]; then
             echo "ERROR: clang binary not found at expected path!"
-            echo "==> Directory listing of toolchain/clang/:"
-            ls -la $GITHUB_WORKSPACE/toolchain/clang/ || true
-            echo "==> Searching for any clang binary:"
-            find $GITHUB_WORKSPACE/toolchain/clang -maxdepth 5 -name "clang" -type f 2>/dev/null | head -10
+            ls -la $GITHUB_WORKSPACE/toolchain/clang-r383902b1/ || true
+            find $GITHUB_WORKSPACE/toolchain/clang-r383902b1 -maxdepth 3 -name "clang" -type f 2>/dev/null | head -5
             exit 1
           fi
 
-          file "$CLANG_BIN"
           "$CLANG_BIN" --version
-          echo "==> Clang toolchain verified successfully!"
+          echo "==> Clang toolchain verified!"
 
-      - name: Clone GCC aarch64 cross-compiler from LineageOS mirror
+      - name: Clone GCC aarch64 cross-compiler
         run: |
-          echo "==> Cloning GCC 4.9 aarch64 cross-compiler..."
           git clone --depth=1 -b lineage-19.1 \
             https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
             $GITHUB_WORKSPACE/toolchain/gcc-aarch64
-          # Remove .git to save disk space
           rm -rf $GITHUB_WORKSPACE/toolchain/gcc-aarch64/.git
 
-      - name: Clone GCC arm32 cross-compiler (for compat vDSO)
+      - name: Clone GCC arm32 cross-compiler
         run: |
-          echo "==> Cloning GCC 4.9 arm32 cross-compiler..."
           git clone --depth=1 -b lineage-19.1 \
             https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
             $GITHUB_WORKSPACE/toolchain/gcc-arm32
-          # Remove .git to save disk space
           rm -rf $GITHUB_WORKSPACE/toolchain/gcc-arm32/.git
 
-      - name: Check disk space after toolchains
+      - name: Show disk space after toolchains
         run: |
           echo "==> Disk space after toolchain setup:"
           df -h /
           echo ""
-          echo "==> Workspace breakdown:"
-          du -sh $GITHUB_WORKSPACE/toolchain/clang/ 2>/dev/null || true
-          du -sh $GITHUB_WORKSPACE/toolchain/gcc-aarch64/ 2>/dev/null || true
-          du -sh $GITHUB_WORKSPACE/toolchain/gcc-arm32/ 2>/dev/null || true
-          du -sh $GITHUB_WORKSPACE/kernel_source/ 2>/dev/null || true
-          du -sh $GITHUB_WORKSPACE/kernel_modules_devicetree/ 2>/dev/null || true
+          du -sh $GITHUB_WORKSPACE/toolchain/clang-r383902b1/ || true
+          du -sh $GITHUB_WORKSPACE/toolchain/gcc-aarch64/ || true
+          du -sh $GITHUB_WORKSPACE/toolchain/gcc-arm32/ || true
+          du -sh $GITHUB_WORKSPACE/kernel_source/ || true
+          du -sh $GITHUB_WORKSPACE/kernel_modules_devicetree/ || true
 
       # ─────────────────────────────────────────────
       # 4. RESOLVE OPLUS VENDOR SYMLINKS
-      #    The kernel source has symlinks to vendor paths
-      #    using relative ../../../vendor/oplus/... references.
-      #    We create vendor directory symlinks so they resolve.
       # ─────────────────────────────────────────────
       - name: Resolve OPlus vendor symlinks
         run: |
           KERNEL_SRC="$GITHUB_WORKSPACE/kernel_source"
           DT_SRC="$GITHUB_WORKSPACE/kernel_modules_devicetree"
 
-          echo "==> Creating vendor directory links at all levels..."
+          echo "==> Creating vendor directory links..."
 
-          # Create "vendor" symlink at multiple parent directories
-          # so ALL relative ../ symlinks resolve regardless of depth
           if [ -d "$DT_SRC/vendor" ]; then
             ln -sfn "$DT_SRC/vendor" "$GITHUB_WORKSPACE/vendor"
             ln -sfn "$DT_SRC/vendor" "$KERNEL_SRC/vendor" 2>/dev/null || true
@@ -194,50 +167,44 @@ jobs:
             ln -sfn "$DT_SRC/vendor" "$WORKSPACE_GRANDPARENT/vendor" 2>/dev/null || true
           fi
 
-          echo "==> Checking for remaining broken symlinks..."
-          broken_links=$(find "$KERNEL_SRC" -type l ! -exec test -e {} \; -print 2>/dev/null || true)
-
-          if [ -z "$broken_links" ]; then
+          # Verify symlinks resolved
+          broken=$(find "$KERNEL_SRC" -type l ! -exec test -e {} \; -print 2>/dev/null || true)
+          if [ -z "$broken" ]; then
             echo "  SUCCESS: All symlinks resolved!"
           else
             echo "  Remaining broken symlinks (removing):"
-            for link in $broken_links; do
-              target=$(readlink "$link")
-              echo "    $link -> $target"
+            echo "$broken" | while read link; do
+              echo "    $(readlink "$link") -> $link"
               rm -f "$link"
             done
           fi
 
       # ─────────────────────────────────────────────
       # 5. PREPARE DEFCONFIG
-      #    Copy extracted stock config into kernel tree
       # ─────────────────────────────────────────────
       - name: Place stock defconfig
         run: |
           cp $GITHUB_WORKSPACE/defconfig/${{ env.DEFCONFIG }} \
              $GITHUB_WORKSPACE/kernel_source/arch/arm64/configs/${{ env.DEFCONFIG }}
-          echo "==> Defconfig placed at arch/arm64/configs/${{ env.DEFCONFIG }}"
+          echo "==> Defconfig placed."
 
       # ─────────────────────────────────────────────
       # 6. BUILD KERNEL
       # ─────────────────────────────────────────────
       - name: Set up environment & build
         run: |
-          # ── Toolchain paths ──
-          CLANG_DIR="$GITHUB_WORKSPACE/toolchain/clang/clang-r383902b1"
+          CLANG_DIR="$GITHUB_WORKSPACE/toolchain/clang-r383902b1"
           GCC64_DIR="$GITHUB_WORKSPACE/toolchain/gcc-aarch64"
           GCC32_DIR="$GITHUB_WORKSPACE/toolchain/gcc-arm32"
 
           export PATH="$CLANG_DIR/bin:$GCC64_DIR/bin:$GCC32_DIR/bin:$PATH"
 
-          # ── Build variables (match stock exactly) ──
           export ARCH=arm64
           export SUBARCH=arm64
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export CROSS_COMPILE=aarch64-linux-android-
           export CROSS_COMPILE_COMPAT=arm-linux-androideabi-
 
-          # Make arguments for full LLVM/Clang build
           MAKE_ARGS=(
             ARCH=arm64
             SUBARCH=arm64
@@ -265,27 +232,20 @@ jobs:
 
           echo "============================================"
           echo "  Step 2: CRITICAL — Disable LOCALVERSION_AUTO"
-          echo "  This prevents git hash from being appended"
-          echo "  to the kernel release string, which would"
-          echo "  break vermagic and cause module load failures."
           echo "============================================"
           scripts/config --file out/.config \
             --disable LOCALVERSION_AUTO
-
-          # Ensure LOCALVERSION stays exactly "-qgki"
           scripts/config --file out/.config \
             --set-str LOCALVERSION "-qgki"
 
-          # Regenerate config with overrides applied
           make "${MAKE_ARGS[@]}" olddefconfig
 
-          # Verify critical settings
           echo "==> Verifying critical config values:"
           grep -E "CONFIG_LOCALVERSION=|CONFIG_LOCALVERSION_AUTO=|CONFIG_MODVERSIONS=|CONFIG_MODULE_SIG" out/.config || true
 
           echo "============================================"
           echo "  Step 3: Build kernel (${{ env.KERNEL_IMAGE }})"
-          echo "  Disk space before build:"
+          echo "  Free space before build:"
           df -h /
           echo "============================================"
           make "${MAKE_ARGS[@]}" -j$(nproc --all) ${{ env.KERNEL_IMAGE }}
@@ -306,24 +266,15 @@ jobs:
       - name: Package kernel into flashable ZIP
         run: |
           cd $GITHUB_WORKSPACE/AnyKernel3
+          rm -rf modules patch ramdisk README.md
 
-          # Remove example files
-          rm -rf modules patch ramdisk
-          rm -f README.md
-
-          # Copy our device-specific anykernel.sh
           cp $GITHUB_WORKSPACE/anykernel/anykernel.sh ./anykernel.sh
-
-          # Copy the compiled kernel image
           cp $GITHUB_WORKSPACE/kernel_source/out/arch/arm64/boot/${{ env.KERNEL_IMAGE }} ./${{ env.KERNEL_IMAGE }}
 
-          # Create the flashable ZIP
           DATESTAMP=$(date +%Y%m%d-%H%M)
           ZIP_NAME="StockEquiv-OP9Pro-${DATESTAMP}.zip"
           zip -r9 "$GITHUB_WORKSPACE/${ZIP_NAME}" \
-            . \
-            -x '.git/*' \
-            -x '*.zip'
+            . -x '.git/*' -x '*.zip'
 
           echo "==> Created: ${ZIP_NAME}"
           ls -lh "$GITHUB_WORKSPACE/${ZIP_NAME}"
