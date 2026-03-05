@@ -37,7 +37,7 @@ jobs:
           swap-storage: true
 
       # ─────────────────────────────────────────────
-      # 0b. Add swap so Clang survives linking phase
+      # 0b. ADD SWAP
       # ─────────────────────────────────────────────
       - name: Create swap file
         run: |
@@ -47,7 +47,7 @@ jobs:
           sudo chmod 600 /mnt/swapfile
           sudo mkswap /mnt/swapfile
           sudo swapon /mnt/swapfile
-          echo "==> Memory after swap setup:"; free -h
+          echo "==> Memory:"; free -h
           echo "==> Disk:"; df -h /
 
       # ─────────────────────────────────────────────
@@ -94,9 +94,9 @@ jobs:
             cpio
 
       # ─────────────────────────────────────────────
-      # 3. TOOLCHAIN — AOSP Clang 11 (r383902b1)
+      # 3. TOOLCHAINS
       # ─────────────────────────────────────────────
-      - name: Clone AOSP Clang 11 (r383902b1) from GitHub mirror
+      - name: Clone AOSP Clang 11 (r383902b1)
         run: |
           git clone --depth=1 \
             https://github.com/anrui2032/android_prebuilts_clang_host_linux-x86_clang-r383902b1.git \
@@ -122,17 +122,68 @@ jobs:
           rm -rf $GITHUB_WORKSPACE/toolchain/gcc-arm32/.git
 
       # ─────────────────────────────────────────────
-      # 4. RESOLVE OPLUS VENDOR + TECHPACK SYMLINKS
+      # 4. CLONE TECHPACK SUBMODULES
+      #    techpack/{audio,camera,display,dataipa,video}
+      #    are gitlink stubs in the kernel source — they
+      #    must be cloned separately from QTI open-source.
+      # ─────────────────────────────────────────────
+      - name: Clone techpack submodules
+        run: |
+          KERNEL_SRC="$GITHUB_WORKSPACE/kernel_source"
+          TP="$KERNEL_SRC/techpack"
+
+          clone_techpack() {
+            local name="$1"; local url="$2"; local branch="$3"
+            echo "==> Cloning techpack/$name ..."
+            rm -rf "$TP/$name"
+            if git clone --depth=1 -b "$branch" "$url" "$TP/$name" 2>/dev/null; then
+              rm -rf "$TP/$name/.git"
+              echo "OK: techpack/$name cloned from $url"
+            else
+              echo "WARN: Could not clone $name from $url (trying fallback or skip)"
+            fi
+          }
+
+          # QTI Lahaina (SM8350) techpack repos — from quic-la mirrors on GitHub
+          # Audio kernel
+          clone_techpack audio \
+            https://github.com/quic-la/platform_vendor_qcom-opensource_audio-kernel \
+            "LA.UM.9.14.r1-00600-LAHAINA.0" || \
+          clone_techpack audio \
+            https://github.com/LineageOS/android_vendor_qcom_opensource_audio-kernel \
+            "lineage-20" || true
+
+          # Camera — less critical for boot, skip if unavailable
+          clone_techpack camera \
+            https://github.com/quic-la/platform_vendor_qcom-opensource_camera-kernel \
+            "LA.UM.9.14.r1-00600-LAHAINA.0" || true
+
+          # Display
+          clone_techpack display \
+            https://github.com/quic-la/platform_vendor_qcom-opensource_display-drivers \
+            "LA.UM.9.14.r1-00600-LAHAINA.0" || true
+
+          # Data IPA
+          clone_techpack dataipa \
+            https://github.com/quic-la/platform_vendor_qcom-opensource_data-ipa-cfg-mgr \
+            "LA.UM.9.14.r1-00600-LAHAINA.0" || true
+
+          # Video
+          clone_techpack video \
+            https://github.com/quic-la/platform_vendor_qcom-opensource_video-driver \
+            "LA.UM.9.14.r1-00600-LAHAINA.0" || true
+
+          echo "==> techpack contents after cloning:"
+          ls -la "$TP/"
+
+      # ─────────────────────────────────────────────
+      # 5. RESOLVE OPLUS VENDOR SYMLINKS
       # ─────────────────────────────────────────────
       - name: Resolve cross-tree symlinks
         run: |
           KERNEL_SRC="$GITHUB_WORKSPACE/kernel_source"
           DT_SRC="$GITHUB_WORKSPACE/kernel_modules_devicetree"
 
-          echo "==> Device tree contents (top level):"
-          ls "$DT_SRC/"
-
-          # vendor/ symlink (OPlus headers)
           if [ -d "$DT_SRC/vendor" ]; then
             ln -sfn "$DT_SRC/vendor" "$GITHUB_WORKSPACE/vendor"
             ln -sfn "$DT_SRC/vendor" "$KERNEL_SRC/vendor" 2>/dev/null || true
@@ -142,18 +193,6 @@ jobs:
             ln -sfn "$DT_SRC/vendor" "$WORKSPACE_GRANDPARENT/vendor" 2>/dev/null || true
           fi
 
-          # techpack/ symlink (QTI audio/camera/display/data-kernel drivers)
-          # The kernel Makefile expects techpack/* to exist inside the kernel tree.
-          if [ -d "$DT_SRC/techpack" ]; then
-            echo "==> Linking DT techpack into kernel source..."
-            ln -sfn "$DT_SRC/techpack" "$KERNEL_SRC/techpack"
-          else
-            echo "WARNING: techpack not found in device tree!"
-            echo "==> Searching for it..."
-            find "$DT_SRC" -maxdepth 3 -name "audio" -type d 2>/dev/null | head -5
-          fi
-
-          # kernel/msm-5.4 symlinks (for relative includes)
           mkdir -p "$GITHUB_WORKSPACE/kernel"
           ln -sfn "$KERNEL_SRC" "$GITHUB_WORKSPACE/kernel/msm-5.4"
           mkdir -p "$DT_SRC/kernel"
@@ -163,15 +202,11 @@ jobs:
             ln -sfn "$KERNEL_SRC" "$WORKSPACE_PARENT/kernel/msm-5.4" 2>/dev/null || true
           fi
 
-          echo "==> kernel_source top-level after symlinks:"
-          ls -la "$KERNEL_SRC/"
-
-          # Remove any broken symlinks in kernel source
           find "$KERNEL_SRC" -maxdepth 3 -type l ! -exec test -e {} \; -print 2>/dev/null \
             | xargs rm -f 2>/dev/null || true
 
       # ─────────────────────────────────────────────
-      # 5. PREPARE DEFCONFIG
+      # 6. PREPARE DEFCONFIG
       # ─────────────────────────────────────────────
       - name: Place stock defconfig
         run: |
@@ -179,7 +214,7 @@ jobs:
              $GITHUB_WORKSPACE/kernel_source/arch/arm64/configs/${{ env.DEFCONFIG }}
 
       # ─────────────────────────────────────────────
-      # 6. BUILD KERNEL
+      # 7. BUILD KERNEL
       # ─────────────────────────────────────────────
       - name: Set up environment & build
         run: |
@@ -188,15 +223,8 @@ jobs:
           GCC32_DIR="$GITHUB_WORKSPACE/toolchain/gcc-arm32"
 
           export PATH="$CLANG_DIR/bin:$GCC64_DIR/bin:$GCC32_DIR/bin:$PATH"
-
           mkdir -p $GITHUB_WORKSPACE/build_tmp
           export TMPDIR=$GITHUB_WORKSPACE/build_tmp
-
-          export ARCH=arm64
-          export SUBARCH=arm64
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          export CROSS_COMPILE=aarch64-linux-android-
-          export CROSS_COMPILE_COMPAT=arm-linux-androideabi-
 
           MAKE_ARGS=(
             ARCH=arm64
@@ -232,15 +260,12 @@ jobs:
           make "${MAKE_ARGS[@]}" olddefconfig
 
           echo "==> Memory before compilation:"; free -h
-
-          # -j2 to reduce per-process peak RAM (less OOM pressure than -j4)
           make "${MAKE_ARGS[@]}" -j2 ${{ env.KERNEL_IMAGE }}
-
           echo "==> Build complete!"
           ls -la out/arch/arm64/boot/${{ env.KERNEL_IMAGE }}
 
       # ─────────────────────────────────────────────
-      # 7. ANYKERNEL3 PACKAGING
+      # 8. ANYKERNEL3 PACKAGING
       # ─────────────────────────────────────────────
       - name: Clone AnyKernel3
         run: |
@@ -258,7 +283,7 @@ jobs:
           ls -lh "$GITHUB_WORKSPACE/${ZIP_NAME}"
 
       # ─────────────────────────────────────────────
-      # 8. UPLOAD ARTIFACT
+      # 9. UPLOAD ARTIFACT
       # ─────────────────────────────────────────────
       - name: Upload kernel ZIP artifact
         uses: actions/upload-artifact@v4
