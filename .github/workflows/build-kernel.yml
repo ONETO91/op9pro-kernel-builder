@@ -246,9 +246,6 @@ jobs:
           scripts/config --file out/.config --enable LTO_NONE
           scripts/config --file out/.config --disable KASAN
           scripts/config --file out/.config --disable UBSAN
-          # Allow section mismatch warnings without failing the build.
-          # OPlus vendor code references __initdata from non-init functions
-          # which is harmless for our purposes (stock equivalent build).
           scripts/config --file out/.config --enable SECTION_MISMATCH_WARN_ONLY
 
           make "${MAKE_ARGS[@]}" olddefconfig
