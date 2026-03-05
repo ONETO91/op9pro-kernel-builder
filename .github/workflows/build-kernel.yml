@@ -23,8 +23,7 @@ jobs:
 
     steps:
       # ─────────────────────────────────────────────
-      # 0. FREE DISK SPACE (keep swap-storage: false
-      #    so we keep the default 4GB swap)
+      # 0. FREE DISK SPACE
       # ─────────────────────────────────────────────
       - name: Maximize disk space
         uses: jlumbroso/free-disk-space@main
@@ -35,22 +34,27 @@ jobs:
           haskell: true
           large-packages: true
           docker-images: true
-          swap-storage: false
+          swap-storage: true
 
       # ─────────────────────────────────────────────
-      # 0b. Create an extra large swap file to
-      #     survive Clang linking phase OOM.
-      #     GitHub runners have ~7GB RAM; Clang ThinLTO
-      #     can easily spike to 12GB+.
+      # 0b. Add a large swap file to survive Clang OOM.
+      #     The free-disk-space action removes the default
+      #     swap to free space. We recreate it using the
+      #     120GB disk instead of RAM.
       # ─────────────────────────────────────────────
-      - name: Create 10GB swap file
+      - name: Create 8GB swap file
         run: |
-          echo "==> Creating 10GB swap file on disk..."
-          sudo fallocate -l 10G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
-          echo "==> Swap enabled:"
+          echo "==> Setting up swap..."
+          # Turn off any existing swap first (free-disk-space may have left state)
+          sudo swapoff -a 2>/dev/null || true
+          # Remove any leftover swapfile
+          sudo rm -f /swapfile /mnt/swapfile
+          # Create fresh 8GB swapfile on the large disk
+          sudo fallocate -l 8G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          echo "==> Swap ready:"
           free -h
           df -h /
 
@@ -80,7 +84,6 @@ jobs:
         run: |
           rm -rf $GITHUB_WORKSPACE/kernel_source/.git
           rm -rf $GITHUB_WORKSPACE/kernel_modules_devicetree/.git
-          echo "==> Removed .git dirs from source repos"
 
       # ─────────────────────────────────────────────
       # 2. INSTALL HOST DEPENDENCIES
@@ -111,12 +114,7 @@ jobs:
       - name: Verify Clang toolchain
         run: |
           CLANG_BIN="$GITHUB_WORKSPACE/toolchain/clang-r383902b1/bin/clang"
-          if [ ! -f "$CLANG_BIN" ]; then
-            echo "ERROR: clang binary not found!"
-            ls -la $GITHUB_WORKSPACE/toolchain/clang-r383902b1/ || true
-            find $GITHUB_WORKSPACE/toolchain/clang-r383902b1 -maxdepth 3 -name "clang" -type f 2>/dev/null | head -5
-            exit 1
-          fi
+          [ -f "$CLANG_BIN" ] || { echo "ERROR: clang not found!"; exit 1; }
           "$CLANG_BIN" --version
 
       - name: Clone GCC cross-compilers
@@ -133,10 +131,8 @@ jobs:
 
       - name: Show disk and memory before build
         run: |
-          echo "==> Disk:"
-          df -h /
-          echo "==> Memory:"
-          free -h
+          echo "==> Disk:"; df -h /
+          echo "==> Memory:"; free -h
 
       # ─────────────────────────────────────────────
       # 4. RESOLVE OPLUS VENDOR SYMLINKS
@@ -149,7 +145,6 @@ jobs:
           if [ -d "$DT_SRC/vendor" ]; then
             ln -sfn "$DT_SRC/vendor" "$GITHUB_WORKSPACE/vendor"
             ln -sfn "$DT_SRC/vendor" "$KERNEL_SRC/vendor" 2>/dev/null || true
-
             WORKSPACE_PARENT=$(dirname "$GITHUB_WORKSPACE")
             WORKSPACE_GRANDPARENT=$(dirname "$WORKSPACE_PARENT")
             ln -sfn "$DT_SRC/vendor" "$WORKSPACE_PARENT/vendor" 2>/dev/null || true
@@ -158,19 +153,15 @@ jobs:
 
           mkdir -p "$GITHUB_WORKSPACE/kernel"
           ln -sfn "$KERNEL_SRC" "$GITHUB_WORKSPACE/kernel/msm-5.4"
-
           mkdir -p "$DT_SRC/kernel"
           ln -sfn "$KERNEL_SRC" "$DT_SRC/kernel/msm-5.4"
-
           if [ -n "$WORKSPACE_PARENT" ]; then
             mkdir -p "$WORKSPACE_PARENT/kernel"
             ln -sfn "$KERNEL_SRC" "$WORKSPACE_PARENT/kernel/msm-5.4" 2>/dev/null || true
           fi
 
           broken=$(find "$KERNEL_SRC" -type l ! -exec test -e {} \; -print 2>/dev/null || true)
-          if [ -n "$broken" ]; then
-            echo "$broken" | while read link; do rm -f "$link"; done
-          fi
+          [ -n "$broken" ] && echo "$broken" | xargs rm -f || true
 
       # ─────────────────────────────────────────────
       # 5. PREPARE DEFCONFIG
@@ -191,7 +182,6 @@ jobs:
 
           export PATH="$CLANG_DIR/bin:$GCC64_DIR/bin:$GCC32_DIR/bin:$PATH"
 
-          # Use disk-backed TMPDIR so Clang bitcode files don't fill RAM
           mkdir -p $GITHUB_WORKSPACE/build_tmp
           export TMPDIR=$GITHUB_WORKSPACE/build_tmp
 
@@ -223,7 +213,6 @@ jobs:
 
           make "${MAKE_ARGS[@]}" ${{ env.DEFCONFIG }}
 
-          # Patch config: disable LOCALVERSION_AUTO, LTO and sanitizers
           scripts/config --file out/.config --disable LOCALVERSION_AUTO
           scripts/config --file out/.config --set-str LOCALVERSION "-qgki"
           scripts/config --file out/.config --disable LTO_CLANG
@@ -235,10 +224,8 @@ jobs:
 
           make "${MAKE_ARGS[@]}" olddefconfig
 
-          echo "==> Memory before compilation:"
-          free -h
+          echo "==> Memory before compilation:"; free -h
 
-          echo "==> Building kernel with -j4 (swap provides fallback RAM)..."
           make "${MAKE_ARGS[@]}" -j4 ${{ env.KERNEL_IMAGE }}
 
           echo "==> Build complete!"
@@ -255,14 +242,11 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/AnyKernel3
           rm -rf modules patch ramdisk README.md
-
           cp $GITHUB_WORKSPACE/anykernel/anykernel.sh ./anykernel.sh
           cp $GITHUB_WORKSPACE/kernel_source/out/arch/arm64/boot/${{ env.KERNEL_IMAGE }} ./${{ env.KERNEL_IMAGE }}
-
           DATESTAMP=$(date +%Y%m%d-%H%M)
           ZIP_NAME="StockEquiv-OP9Pro-${DATESTAMP}.zip"
           zip -r9 "$GITHUB_WORKSPACE/${ZIP_NAME}" . -x '.git/*' -x '*.zip'
-          echo "==> Created: ${ZIP_NAME}"
           ls -lh "$GITHUB_WORKSPACE/${ZIP_NAME}"
 
       # ─────────────────────────────────────────────
