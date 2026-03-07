@@ -58,7 +58,7 @@ jobs:
             libssl-dev libxml2 libxml2-utils lzop \
             pngcrush rsync schedtool squashfs-tools \
             xsltproc zip zlib1g-dev python3 python-is-python3 \
-            cpio
+            cpio dos2unix
 
       # ─────────────────────────────────────────────
       # 3. TOOLCHAIN — AOSP Clang 11 (r383902b1)
@@ -109,24 +109,15 @@ jobs:
           DT_SRC="$GITHUB_WORKSPACE/kernel_modules_devicetree"
 
           echo "==> Finding broken symlinks in kernel source..."
-          # Find all broken symlinks in the kernel source
-          broken_links=$(find "$KERNEL_SRC" -type l ! -exec test -e {} \; -print 2>/dev/null || true)
+          find "$KERNEL_SRC" -type l ! -exec test -e {} \; -print 2>/dev/null | while read -r link; do
+            target=$(readlink "$link")
+            echo "  Broken Symlink: $link -> $target"
 
-          if [ -z "$broken_links" ]; then
-            echo "==> No broken symlinks found."
-          else
-            echo "==> Found broken symlinks:"
-            echo "$broken_links"
+            # The symlinks typically contain 'vendor/oplus/' anywhere in the target path.
+            # Extract the vendor-relative path by matching everything from 'vendor/oplus/'
+            vendor_rel=$(echo "$target" | grep -o 'vendor/oplus/.*' || true)
 
-            for link in $broken_links; do
-              target=$(readlink "$link")
-              echo "  Symlink: $link -> $target"
-
-              # The symlinks typically point to ../../vendor/oplus/kernel/<name>
-              # We need to resolve this relative to the device tree repo
-              # Extract the vendor-relative path
-              vendor_rel=$(echo "$target" | sed 's|^\.\./\.\./||')
-
+            if [ -n "$vendor_rel" ]; then
               if [ -d "$DT_SRC/$vendor_rel" ]; then
                 echo "    ==> Found in device tree: $DT_SRC/$vendor_rel"
                 rm -f "$link"
@@ -138,7 +129,6 @@ jobs:
                 cp "$DT_SRC/$vendor_rel" "$link"
                 echo "    ==> Copied successfully."
               else
-                # Oplus often reorganizes directories into subfolders like oplus_performance
                 target_name=$(basename "$target")
                 found_path=$(find "$DT_SRC" -name "$target_name" | head -n 1)
                 if [ -n "$found_path" ]; then
@@ -152,10 +142,17 @@ jobs:
                   rm -f "$link"
                 fi
               fi
-            done
-          fi
-
+            else
+               # Handle non-oplus broken links gracefully by removing them
+               rm -f "$link"
+            fi
+          done
           echo "==> Vendor symlink resolution complete."
+
+      - name: Normalize Kconfig line endings
+        run: |
+          echo "==> Converting CRLF to LF in Kconfig files..."
+          find $GITHUB_WORKSPACE/kernel_source -name "Kconfig*" -exec dos2unix {} +
 
       # ─────────────────────────────────────────────
       # 5. PREPARE DEFCONFIG
