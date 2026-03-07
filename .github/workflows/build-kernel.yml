@@ -149,24 +149,49 @@ jobs:
           done
           echo "==> Vendor symlink resolution complete."
 
-      - name: Overlay Oplus C Source Directories
+      - name: Mass Overlay Oplus C Source Directories
         run: |
           KERNEL_SRC="$GITHUB_WORKSPACE/kernel_source"
           DT_SRC="$GITHUB_WORKSPACE/kernel_modules_devicetree"
-
-          echo "==> Overlaying Oplus performance features into kernel source..."
+          echo "==> Performing Mass CI Overlay from Device Tree to Kernel Source..."
           
-          if [ -d "$DT_SRC/vendor/oplus/kernel/oplus_performance/healthinfo" ]; then
-            echo "  --> Copying healthinfo..."
-            cp -rn "$DT_SRC/vendor/oplus/kernel/oplus_performance/healthinfo/"* "$KERNEL_SRC/" || true
-          fi
+          # 1. Overlay mirrored features from oplus_performance
+          # These folders contain kernel/, fs/, mm/, include/ etc.
+          # We overlay their CONTENTS into the kernel source root.
+          for dir in $DT_SRC/vendor/oplus/kernel/oplus_performance/*; do
+            if [ -d "$dir" ]; then
+              if [ -d "$dir/kernel" ] || [ -d "$dir/fs" ] || [ -d "$dir/mm" ]; then
+                echo "  --> Mirror overlay: $(basename $dir)"
+                cp -rn "$dir/"* "$KERNEL_SRC/" || true
+              else
+                echo "  --> Standalone overlay: $(basename $dir)"
+                cp -rn "$dir" "$KERNEL_SRC/" || true
+              fi
+            fi
+          done
 
-          if [ -d "$DT_SRC/vendor/oplus/kernel/oplus_performance/sched_assist" ]; then
-            echo "  --> Copying sched_assist..."
-            cp -rn "$DT_SRC/vendor/oplus/kernel/oplus_performance/sched_assist/"* "$KERNEL_SRC/" || true
+          # 2. Handle Oplus system features and headers
+          echo "  --> Overlaying Oplus system features..."
+          for dir in $DT_SRC/vendor/oplus/kernel/system/*; do
+            if [ -d "$dir" ]; then
+              if [ "$(basename $dir)" == "include" ]; then
+                echo "    -> Special case: include -> include/soc/oplus"
+                mkdir -p "$KERNEL_SRC/include/soc/oplus"
+                cp -rn "$dir/"* "$KERNEL_SRC/include/soc/oplus/" || true
+              else
+                echo "    -> Standard system feature: $(basename $dir)"
+                cp -rn "$dir" "$KERNEL_SRC/" || true
+              fi
+            fi
+          done
+          
+          # 3. Handle Oplus storage features
+          echo "  --> Overlaying Oplus storage features..."
+          if [ -d "$DT_SRC/vendor/oplus/kernel/storage" ]; then
+             cp -rn "$DT_SRC/vendor/oplus/kernel/storage/"* "$KERNEL_SRC/" || true
           fi
-
-          echo "==> Overlay complete."
+          
+          echo "==> Mass Overlay complete."
 
       - name: Normalize Kconfig line endings
         run: |
