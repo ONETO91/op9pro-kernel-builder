@@ -37,7 +37,7 @@ patch_vbmeta_flag=auto;
 ## AnyKernel install
 # The OP9 Pro uses boot image header v3 (GKI-style).
 # We flash only the kernel image (no ramdisk repacking needed).
-dump_boot;
+split_boot;
 
-write_boot;
+flash_boot;
 ## end install
