@@ -117,11 +117,33 @@ jobs:
           echo "==> Defconfig placed at arch/arm64/configs/${{ env.DEFCONFIG }}"
 
       # ─────────────────────────────────────────────
-      # 6. BUILD WITH WRAPPER SCRIPT
+      # 6. EMULATE AOSP DIRECTORY STRUCTURE
+      # ─────────────────────────────────────────────
+      - name: Emulate AOSP Directory Structure
+        run: |
+          echo "==> Emulating AOSP directory structure via symlinks..."
+          # QCOM scripts expect AOSP root with kernel/, device/, vendor/
+          
+          # Provide exact symlink requested by user to be safe
+          mkdir -p $GITHUB_WORKSPACE/kernel_source/kernel
+          ln -sfn $GITHUB_WORKSPACE/kernel_source/device/qcom/kernelscripts/upstream/build.config.common \
+            $GITHUB_WORKSPACE/kernel_source/kernel/build.config.common
+          
+          # Create an emulated AOSP root properly supporting 'cd kernel && make'
+          mkdir -p $GITHUB_WORKSPACE/aosp_root
+          ln -sfn $GITHUB_WORKSPACE/kernel_source $GITHUB_WORKSPACE/aosp_root/kernel
+          ln -sfn $GITHUB_WORKSPACE/kernel_source/device $GITHUB_WORKSPACE/aosp_root/device
+          ln -sfn $GITHUB_WORKSPACE/kernel_source/vendor $GITHUB_WORKSPACE/aosp_root/vendor
+          # Also symlink any extra top level configs just in case
+          ln -sfn $GITHUB_WORKSPACE/kernel_source/build.config.* $GITHUB_WORKSPACE/aosp_root/ 2>/dev/null || true
+
+      # ─────────────────────────────────────────────
+      # 7. BUILD WITH WRAPPER SCRIPT
       # ─────────────────────────────────────────────
       - name: Generate Proxy Config & Build
         run: |
-          cd $GITHUB_WORKSPACE/kernel_source
+          # Build from the emulated AOSP root
+          cd $GITHUB_WORKSPACE/aosp_root
 
           # ── Toolchain paths ──
           CLANG_DIR="$GITHUB_WORKSPACE/toolchain/clang/clang-r383902b"
@@ -130,9 +152,10 @@ jobs:
 
           export PATH="$CLANG_DIR/bin:$GCC64_DIR/bin:$GCC32_DIR/bin:$PATH"
 
-          # Create Proxy Config
+          # Create Proxy Config in aosp_root
           cat << 'EOF' > build.config.custom
-          . ${ROOT_DIR}/build.config.msm.lahaina
+          # Source from the true location
+          . ${ROOT_DIR}/kernel/build.config.msm.lahaina
           DEFCONFIG=ossi_oos14_defconfig
           PRE_DEFCONFIG_CMDS=""
           LOCALVERSION="-qgki"
@@ -160,7 +183,7 @@ jobs:
           bash device/qcom/kernelscripts/build.sh LLVM=1 LLVM_IAS=1 O=out
 
       # ─────────────────────────────────────────────
-      # 7. ANYKERNEL3 PACKAGING
+      # 8. ANYKERNEL3 PACKAGING
       # ─────────────────────────────────────────────
       - name: Clone AnyKernel3
         run: |
@@ -179,11 +202,16 @@ jobs:
 
           # Find the compiled kernel image dynamically
           echo "==> Searching for compiled kernel image..."
-          KERNEL_BIN=$(find $GITHUB_WORKSPACE/kernel_source/out -type f -name "${{ env.KERNEL_IMAGE }}" | grep "arch/arm64/boot" | head -n 1)
+          KERNEL_BIN=$(find $GITHUB_WORKSPACE/aosp_root/out -type f -name "${{ env.KERNEL_IMAGE }}" | grep "arch/arm64/boot" | head -n 1)
 
           if [ -z "$KERNEL_BIN" ]; then
             echo "Searching all of out/ as fallback..."
-            KERNEL_BIN=$(find $GITHUB_WORKSPACE/kernel_source/out -type f -name "${{ env.KERNEL_IMAGE }}" | head -n 1)
+            KERNEL_BIN=$(find $GITHUB_WORKSPACE/aosp_root/out -type f -name "${{ env.KERNEL_IMAGE }}" | head -n 1)
+          fi
+
+          if [ -z "$KERNEL_BIN" ]; then
+            echo "Searching kernel_source out/ just in case..."
+            KERNEL_BIN=$(find $GITHUB_WORKSPACE/kernel_source -type f -name "${{ env.KERNEL_IMAGE }}" | head -n 1)
           fi
 
           if [ -z "$KERNEL_BIN" ]; then
@@ -211,7 +239,7 @@ jobs:
           ls -lh "$GITHUB_WORKSPACE/${ZIP_NAME}"
 
       # ─────────────────────────────────────────────
-      # 8. UPLOAD ARTIFACT
+      # 9. UPLOAD ARTIFACT
       # ─────────────────────────────────────────────
       - name: Upload kernel ZIP artifact
         uses: actions/upload-artifact@v4
