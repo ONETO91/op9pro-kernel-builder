@@ -96,6 +96,11 @@ jobs:
             https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
             $GITHUB_WORKSPACE/toolchain/gcc-arm32
 
+      - name: Clone AOSP Build Scripts
+        run: |
+          echo "==> Cloning AOSP build scripts (append_cmd provider)..."
+          git clone https://android.googlesource.com/kernel/build -b common-android11-5.4 $GITHUB_WORKSPACE/kernel_source/build
+
       # ─────────────────────────────────────────────
       # 4. MERGE DEVICE TREE & SOURCE
       # ─────────────────────────────────────────────
@@ -122,7 +127,7 @@ jobs:
       - name: Emulate AOSP Directory Structure
         run: |
           echo "==> Emulating AOSP directory structure via symlinks..."
-          # QCOM scripts expect AOSP root with kernel/, device/, vendor/
+          # QCOM scripts expect AOSP root with kernel/, device/, vendor/, build/
           
           # Provide exact symlink requested by user to be safe
           mkdir -p $GITHUB_WORKSPACE/kernel_source/kernel
@@ -134,6 +139,7 @@ jobs:
           ln -sfn $GITHUB_WORKSPACE/kernel_source $GITHUB_WORKSPACE/aosp_root/kernel
           ln -sfn $GITHUB_WORKSPACE/kernel_source/device $GITHUB_WORKSPACE/aosp_root/device
           ln -sfn $GITHUB_WORKSPACE/kernel_source/vendor $GITHUB_WORKSPACE/aosp_root/vendor
+          ln -sfn $GITHUB_WORKSPACE/kernel_source/build $GITHUB_WORKSPACE/aosp_root/build
           # Also symlink any extra top level configs just in case
           ln -sfn $GITHUB_WORKSPACE/kernel_source/build.config.* $GITHUB_WORKSPACE/aosp_root/ 2>/dev/null || true
 
