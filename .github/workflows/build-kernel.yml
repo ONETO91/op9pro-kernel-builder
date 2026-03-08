@@ -99,7 +99,7 @@ jobs:
       - name: Clone AOSP Build Scripts
         run: |
           echo "==> Cloning AOSP build scripts (append_cmd provider)..."
-          git clone https://android.googlesource.com/kernel/build -b common-android11-5.4 $GITHUB_WORKSPACE/kernel_source/build
+          git clone https://android.googlesource.com/kernel/build --depth=1 $GITHUB_WORKSPACE/kernel_source/build
 
       # ─────────────────────────────────────────────
       # 4. MERGE DEVICE TREE & SOURCE
