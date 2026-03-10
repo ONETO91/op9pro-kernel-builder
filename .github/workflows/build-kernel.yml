@@ -106,11 +106,15 @@ jobs:
       # ─────────────────────────────────────────────
       - name: Construct Native AOSP Workspace Structure
         run: |
-          echo "==> Syncing ONLY device/ and vendor/ from Device Tree to prevent kernel/ tree pollution..."
+          echo "==> Syncing device/, vendor/, and techpack/ from Device Tree..."
           mkdir -p $GITHUB_WORKSPACE/device
           mkdir -p $GITHUB_WORKSPACE/vendor
           rsync -a $GITHUB_WORKSPACE/kernel_modules_devicetree/device/ $GITHUB_WORKSPACE/device/
           rsync -a $GITHUB_WORKSPACE/kernel_modules_devicetree/vendor/ $GITHUB_WORKSPACE/vendor/
+
+          # Critically required for QCOM audio/display/camera Makefiles
+          mkdir -p $GITHUB_WORKSPACE/kernel/msm-5.4/techpack/
+          rsync -a $GITHUB_WORKSPACE/kernel_modules_devicetree/kernel/msm-5.4/techpack/ $GITHUB_WORKSPACE/kernel/msm-5.4/techpack/
 
           # Clean up devicetree repo to save space
           rm -rf $GITHUB_WORKSPACE/kernel_modules_devicetree
