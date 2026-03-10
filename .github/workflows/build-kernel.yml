@@ -124,16 +124,7 @@ jobs:
             $GITHUB_WORKSPACE/kernel/msm-5.4/build.config.common
 
       # ─────────────────────────────────────────────
-      # 5. PREPARE DEFCONFIG
-      # ─────────────────────────────────────────────
-      - name: Place stock defconfig
-        run: |
-          cp $GITHUB_WORKSPACE/defconfig/${{ env.DEFCONFIG }} \
-             $GITHUB_WORKSPACE/kernel/msm-5.4/arch/arm64/configs/${{ env.DEFCONFIG }}
-          echo "==> Defconfig placed at arch/arm64/configs/${{ env.DEFCONFIG }}"
-
-      # ─────────────────────────────────────────────
-      # 6. BUILD WITH WRAPPER SCRIPT
+      # 5. BUILD WITH WRAPPER SCRIPT
       # ─────────────────────────────────────────────
       - name: Generate Proxy Config & Build
         run: |
@@ -161,7 +152,6 @@ jobs:
           # Source from the true location
           . ${ROOT_DIR}/kernel/msm-5.4/build.config.msm.lahaina
 
-          DEFCONFIG=ossi_oos14_defconfig
           LOCALVERSION="-qgki-gd2a1055adeb0"
           EOF
 
@@ -193,7 +183,7 @@ jobs:
           bash device/qcom/kernelscripts/build.sh LLVM=1 LLVM_IAS=1
 
       # ─────────────────────────────────────────────
-      # 7. ANYKERNEL3 PACKAGING
+      # 6. ANYKERNEL3 PACKAGING
       # ─────────────────────────────────────────────
       - name: Clone AnyKernel3
         run: |
@@ -235,7 +225,7 @@ jobs:
           ls -lh "$GITHUB_WORKSPACE/${ZIP_NAME}"
 
       # ─────────────────────────────────────────────
-      # 8. UPLOAD ARTIFACT
+      # 7. UPLOAD ARTIFACT
       # ─────────────────────────────────────────────
       - name: Upload kernel ZIP artifact
         uses: actions/upload-artifact@v4
