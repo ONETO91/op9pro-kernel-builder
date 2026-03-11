@@ -159,18 +159,28 @@ jobs:
           # ────────────────────────────────────────────────────────────
           # FIX 1: SWITCH FROM DEBUG TO NON-DEBUG VARIANT
           # ────────────────────────────────────────────────────────────
-          # The defconfig fragment chain in build.config.msm.lahaina uses
-          # lahaina-qgki-debug_defconfig, which adds CONFIG_DEBUG_PREEMPT=y
-          # and sets LOCALVERSION="-qgki-debug". This breaks KMI/ABI
-          # compatibility with stock vendor modules that expect a pure
-          # non-debug kernel. sed it to use the non-debug variant.
+          # build.config.msm.lahaina has: VARIANTS=(qgki-debug ...)
+          # The generate_defconfig function picks the FIRST variant and
+          # constructs: vendor/lahaina-${VARIANT}_defconfig
+          #
+          # Run #61 proved that sed 's/lahaina-qgki-debug/...' does NOT
+          # match because the file uses 'qgki-debug' as an array element.
+          # The correct sed must target 'qgki-debug' → 'qgki' directly.
+          #
+          # This changes:
+          #   VARIANTS=(qgki-debug ...) → VARIANTS=(qgki ...)
+          #   case: qgki-debug|...      → case: qgki|...
+          # Result: generate_defconfig.sh vendor/lahaina-qgki_defconfig
+          # Effect: lahaina_debug.config is NO LONGER merged, so
+          #         CONFIG_DEBUG_PREEMPT=y is eliminated.
           # ────────────────────────────────────────────────────────────
           echo "==> [CRITICAL] Switching from debug to non-debug build variant..."
           echo "    Before:"
-          grep -n "debug" $GITHUB_WORKSPACE/kernel/msm-5.4/build.config.msm.lahaina || true
-          sed -i 's/lahaina-qgki-debug/lahaina-qgki/g' $GITHUB_WORKSPACE/kernel/msm-5.4/build.config.msm.lahaina
+          grep -n "qgki-debug" $GITHUB_WORKSPACE/kernel/msm-5.4/build.config.msm.lahaina || true
+          sed -i 's/qgki-debug/qgki/g' $GITHUB_WORKSPACE/kernel/msm-5.4/build.config.msm.lahaina
           echo "    After:"
-          grep -n "qgki" $GITHUB_WORKSPACE/kernel/msm-5.4/build.config.msm.lahaina || true
+          cat $GITHUB_WORKSPACE/kernel/msm-5.4/build.config.msm.lahaina
+          echo "---"
 
           # ────────────────────────────────────────────────────────────
           # FIX 2: FORCE EXACT STOCK VERMAGIC IN ALL DEFCONFIG FRAGMENTS
