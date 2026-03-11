@@ -157,27 +157,35 @@ jobs:
           export PATH="$CLANG_DIR/bin:$GCC64_DIR/bin:$GCC32_DIR/bin:$PATH"
 
           # ────────────────────────────────────────────────────────────
-          # FIX 1: SWITCH FROM DEBUG TO NON-DEBUG VARIANT
+          # FIX 1: SWITCH TO qgki-consolidate VARIANT
           # ────────────────────────────────────────────────────────────
           # build.config.msm.lahaina has: VARIANTS=(qgki-debug ...)
           # The generate_defconfig function picks the FIRST variant and
           # constructs: vendor/lahaina-${VARIANT}_defconfig
           #
-          # Run #61 proved that sed 's/lahaina-qgki-debug/...' does NOT
-          # match because the file uses 'qgki-debug' as an array element.
-          # The correct sed must target 'qgki-debug' → 'qgki' directly.
+          # History of fixes:
+          #   Run #60-61: Used qgki-debug → added CONFIG_DEBUG_PREEMPT=y → bootloop
+          #   Run #62:    Used qgki (plain) → REMOVED lahaina_consolidate.config → bootloop
+          #   Run #63:    Use qgki-consolidate → keeps consolidate, drops debug ✓
           #
-          # This changes:
-          #   VARIANTS=(qgki-debug ...) → VARIANTS=(qgki ...)
-          #   case: qgki-debug|...      → case: qgki|...
-          # Result: generate_defconfig.sh vendor/lahaina-qgki_defconfig
-          # Effect: lahaina_debug.config is NO LONGER merged, so
-          #         CONFIG_DEBUG_PREEMPT=y is eliminated.
+          # The stock OnePlus kernel was built with consolidate configs.
+          # Only the debug fragment breaks KMI ABI compatibility.
+          #
+          # Fragment blend result:
+          #   gki_defconfig → lahaina_ALLYES_GKI → lahaina_QGKI → lahaina_consolidate
+          #   (NO lahaina_debug.config)
           # ────────────────────────────────────────────────────────────
-          echo "==> [CRITICAL] Switching from debug to non-debug build variant..."
+          echo "==> [CRITICAL] Switching to qgki-consolidate variant..."
           echo "    Before:"
-          grep -n "qgki-debug" $GITHUB_WORKSPACE/kernel/msm-5.4/build.config.msm.lahaina || true
-          sed -i 's/qgki-debug/qgki/g' $GITHUB_WORKSPACE/kernel/msm-5.4/build.config.msm.lahaina
+          cat $GITHUB_WORKSPACE/kernel/msm-5.4/build.config.msm.lahaina
+          echo "---"
+
+          # Change the first element of VARIANTS array from qgki-debug to qgki-consolidate
+          sed -i 's/VARIANTS=(qgki-debug/VARIANTS=(qgki-consolidate/' $GITHUB_WORKSPACE/kernel/msm-5.4/build.config.msm.lahaina
+
+          # Fix the case pattern to match qgki-consolidate as a valid GKI variant
+          sed -i 's/qgki-debug | qgki-consolidate/qgki-consolidate | qgki-consolidate/' $GITHUB_WORKSPACE/kernel/msm-5.4/build.config.msm.lahaina
+
           echo "    After:"
           cat $GITHUB_WORKSPACE/kernel/msm-5.4/build.config.msm.lahaina
           echo "---"
@@ -189,7 +197,7 @@ jobs:
           # we must force CONFIG_LOCALVERSION BEFORE defconfig generation
           # by patching the fragment files themselves.
           # Stock vermagic: 5.4.xxx-qgki-gd2a1055adeb0
-          # Without this, the non-debug variant would set "-qgki-consolidate"
+          # Without this, the consolidate variant would set "-qgki-consolidate"
           # which still mismatches stock vendor modules.
           # ────────────────────────────────────────────────────────────
           echo "==> [CRITICAL] Forcing stock LOCALVERSION in defconfig fragments..."
@@ -207,7 +215,7 @@ jobs:
           # Create Proxy Config
           # ────────────────────────────────────────────────────────────
           # The proxy config sources build.config.msm.lahaina (now patched
-          # to non-debug) and sets up the environment for the OEM build.sh.
+          # to qgki-consolidate) and sets up the environment for the OEM build.sh.
           # POST_DEFCONFIG_CMDS is kept as a best-effort backup, but the
           # real fix is the sed patches above.
           # ────────────────────────────────────────────────────────────
@@ -258,7 +266,7 @@ jobs:
 
           echo "============================================"
           echo "  Executing Official QCOM Build Wrapper"
-          echo "  Variant: NON-DEBUG (lahaina-qgki)"
+          echo "  Variant: qgki-consolidate (stock-equivalent)"
           echo "  Target LOCALVERSION: -qgki-gd2a1055adeb0"
           echo "============================================"
           bash device/qcom/kernelscripts/build.sh LLVM=1 LLVM_IAS=1
