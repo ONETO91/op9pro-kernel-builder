@@ -146,11 +146,11 @@ jobs:
       # ─────────────────────────────────────────────
       - name: Allocate Swap Space
         run: |
-          echo "==> Allocating 10GB swap space to prevent LLVM LTO out-of-memory crash..."
-          sudo fallocate -l 10G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          echo "==> Allocating 10GB supplementary swap space..."
+          sudo fallocate -l 10G /swapfile2
+          sudo chmod 600 /swapfile2
+          sudo mkswap /swapfile2
+          sudo swapon /swapfile2
           free -h
 
       # ─────────────────────────────────────────────
