@@ -22,9 +22,6 @@ jobs:
     timeout-minutes: 180
 
     steps:
-      # ─────────────────────────────────────────────
-      # 1. CHECKOUT SOURCES
-      # ─────────────────────────────────────────────
       - name: Checkout build scripts
         uses: actions/checkout@v4
 
@@ -52,9 +49,6 @@ jobs:
           sudo rm -rf /usr/local/share/powershell
           sudo rm -rf /usr/local/share/chromium
 
-      # ─────────────────────────────────────────────
-      # 2. INSTALL HOST DEPENDENCIES
-      # ─────────────────────────────────────────────
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
@@ -68,9 +62,6 @@ jobs:
             xsltproc zip zlib1g-dev python3 python-is-python3 \
             cpio dos2unix rsync
 
-      # ─────────────────────────────────────────────
-      # 3. TOOLCHAIN SETUP
-      # ─────────────────────────────────────────────
       - name: Clone Toolchains
         run: |
           echo "==> Cloning official AOSP Clang 11.0.2..."
@@ -82,9 +73,6 @@ jobs:
           echo "==> Cloning AOSP build scripts..."
           git clone https://android.googlesource.com/kernel/build --depth=1 $GITHUB_WORKSPACE/build
 
-      # ─────────────────────────────────────────────
-      # 4. EMULATE AOSP DIRECTORY STRUCTURE
-      # ─────────────────────────────────────────────
       - name: Construct Native AOSP Workspace Structure
         run: |
           echo "==> Syncing device/ and vendor/ from Device Tree..."
@@ -93,20 +81,19 @@ jobs:
           rsync -a $GITHUB_WORKSPACE/kernel_modules_devicetree/device/ $GITHUB_WORKSPACE/device/
           rsync -a $GITHUB_WORKSPACE/kernel_modules_devicetree/vendor/ $GITHUB_WORKSPACE/vendor/
 
-          echo "==> Syncing techpack from Device Tree to restore Display/Audio/Camera drivers..."
-          mkdir -p $GITHUB_WORKSPACE/kernel/msm-5.4/techpack/
-          rsync -a $GITHUB_WORKSPACE/kernel_modules_devicetree/kernel/msm-5.4/techpack/ $GITHUB_WORKSPACE/kernel/msm-5.4/techpack/
+          echo "==> Creating techpack stub Makefiles to prevent module collision..."
+          for subdir in audio camera display video dataipa; do
+            dir="$GITHUB_WORKSPACE/kernel/msm-5.4/techpack/${subdir}"
+            mkdir -p "${dir}"
+            echo "# Stub" > "${dir}/Makefile"
+            touch "${dir}/Kconfig"
+          done
 
-          # Clean up devicetree repo to save space
           rm -rf $GITHUB_WORKSPACE/kernel_modules_devicetree
 
-          # Provide the common config that early wrappers explicitly expect
           ln -sfn $GITHUB_WORKSPACE/device/qcom/kernelscripts/upstream/build.config.common \
             $GITHUB_WORKSPACE/kernel/msm-5.4/build.config.common
 
-      # ─────────────────────────────────────────────
-      # 4.5. ALLOCATE SWAP SPACE (PREVENT OOM)
-      # ─────────────────────────────────────────────
       - name: Allocate Swap Space
         run: |
           echo "==> Allocating 10GB supplementary swap space..."
@@ -116,9 +103,6 @@ jobs:
           sudo swapon /swapfile2
           free -h
 
-      # ─────────────────────────────────────────────
-      # 5. BUILD WITH WRAPPER SCRIPT
-      # ─────────────────────────────────────────────
       - name: Generate Proxy Config & Build
         run: |
           cd $GITHUB_WORKSPACE
@@ -132,11 +116,15 @@ jobs:
           sed -i 's/VARIANTS=(qgki-debug/VARIANTS=(qgki-consolidate/' $GITHUB_WORKSPACE/kernel/msm-5.4/build.config.msm.lahaina
           sed -i 's/qgki-debug | qgki-consolidate/qgki-consolidate | qgki-consolidate/' $GITHUB_WORKSPACE/kernel/msm-5.4/build.config.msm.lahaina
 
-          # 2. FORCE EXACT STOCK VERMAGIC IN ALL DEFCONFIG FRAGMENTS
           CONFIGS_DIR="$GITHUB_WORKSPACE/kernel/msm-5.4/arch/arm64/configs"
+          
+          # 2. FORCE EXACT STOCK VERMAGIC
           find "$CONFIGS_DIR" -type f \( -name "*.config" -o -name "*defconfig" \) -exec sed -i 's/CONFIG_LOCALVERSION="[^"]*"/CONFIG_LOCALVERSION="-qgki-gd2a1055adeb0"/g' {} +
+          
+          # 3. BYPASS STRICT MODULE CRC CHECKS
+          echo "==> Bypassing Strict Module CRC Checks (MODVERSIONS)..."
+          find "$CONFIGS_DIR" -type f \( -name "*.config" -o -name "*defconfig" \) -exec sed -i 's/CONFIG_MODVERSIONS=y/# CONFIG_MODVERSIONS is not set/g' {} +
 
-          # 3. CREATE PROXY CONFIG (Restored append_cmd)
           cat << 'EOF' > build.config.custom
           function append_cmd() {
               if [ ! -z "${!1}" ]; then
@@ -152,6 +140,8 @@ jobs:
           function fix_localversion() {
               ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config \
                 --set-str LOCALVERSION "-qgki-gd2a1055adeb0"
+              ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config \
+                --disable MODVERSIONS
               (cd ${KERNEL_DIR} && make "${TOOL_ARGS[@]}" O=${OUT_DIR} ${MAKE_ARGS} olddefconfig)
           }
           append_cmd POST_DEFCONFIG_CMDS 'fix_localversion'
@@ -182,12 +172,8 @@ jobs:
 
           bash device/qcom/kernelscripts/build.sh LLVM=1 LLVM_IAS=1
 
-      # ─────────────────────────────────────────────
-      # 6. ANYKERNEL3 PACKAGING
-      # ─────────────────────────────────────────────
       - name: Package kernel into flashable ZIP
         run: |
-          # Use the exact correct path identified in Run #65
           RAW_IMAGE="$GITHUB_WORKSPACE/out/msm-5.4-lahaina-qgki-consolidate/dist/Image"
 
           if [ ! -f "$RAW_IMAGE" ]; then
@@ -212,9 +198,6 @@ jobs:
 
           echo "==> Created: ${ZIP_NAME}"
 
-      # ─────────────────────────────────────────────
-      # 7. UPLOAD ARTIFACTS
-      # ─────────────────────────────────────────────
       - name: Upload Kernel Artifacts
         uses: actions/upload-artifact@v4
         with:
