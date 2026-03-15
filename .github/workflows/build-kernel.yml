@@ -48,7 +48,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             bc bison build-essential ccache curl flex git gnupg gperf \
             lib32ncurses5-dev lib32readline-dev lib32z1-dev libelf-dev \
-            libssl-dev lzop python3 python-is-python3 cpio dos2unix rsync zip unzip e2fsprogs kmod
+            libssl-dev lzop python3 python-is-python3 cpio dos2unix rsync zip unzip kmod
 
       - name: Clone Toolchains
         run: |
@@ -136,25 +136,45 @@ jobs:
       - name: Prepare FinalOutput Directory
         run: mkdir -p $GITHUB_WORKSPACE/FinalOutput
 
-      - name: Build vendor_dlkm.img
+      - name: Build Module for Out-of-Tree Definitions
         run: |
-          echo "==> Creating vendor_dlkm.img safely with correct dependencies..."
+          mkdir -p $GITHUB_WORKSPACE/MagiskModule/custom_ko
+          find $GITHUB_WORKSPACE/out -name "*.ko" -type f -exec cp {} $GITHUB_WORKSPACE/MagiskModule/custom_ko/ \;
           
-          cd $GITHUB_WORKSPACE/kernel/msm-5.4
-          export PATH="$GITHUB_WORKSPACE/toolchain/clang/clang-r383902b/bin:$GITHUB_WORKSPACE/toolchain/gcc-aarch64/bin:$GITHUB_WORKSPACE/toolchain/gcc-arm32/bin:$PATH"
-          export CROSS_COMPILE=aarch64-linux-android-
-          export CROSS_COMPILE_COMPAT=arm-linux-androideabi-
-          export CC=clang
+          cat << 'EOF' > $GITHUB_WORKSPACE/MagiskModule/module.prop
+          id=op9pro_custom_kernel_modules
+          name=OnePlus 9 Pro Custom Kernel Modules
+          version=v1.0
+          versionCode=1
+          author=CustomBuild
+          description=Systemlessly injects out-of-tree modules for the custom kernel.
+          EOF
           
-          mkdir -p $GITHUB_WORKSPACE/vendor_dlkm_staging
+          cat << 'EOF' > $GITHUB_WORKSPACE/MagiskModule/customize.sh
+          ui_print "- Installing Custom Kernel Modules..."
+          MODULES_DIR="/vendor/lib/modules"
+          if [ ! -d "$MODULES_DIR" ]; then
+              MODULES_DIR="/vendor_dlkm/lib/modules"
+          fi
+          ui_print "- Target directory: $MODULES_DIR"
           
-          # تثبيت التعريفات رسمياً لتوليد فهارس modules.load و modules.dep
-          make O=$GITHUB_WORKSPACE/out INSTALL_MOD_PATH=$GITHUB_WORKSPACE/vendor_dlkm_staging INSTALL_MOD_STRIP=1 modules_install
+          for ko in $(find $MODPATH/custom_ko -type f -name "*.ko"); do
+              filename=$(basename $ko)
+              sys_path=$(find $MODULES_DIR -type f -name "$filename" | head -n 1)
+              if [ -n "$sys_path" ]; then
+                  rel_path=${sys_path#$MODULES_DIR/}
+                  mkdir -p $(dirname $MODPATH/system$MODULES_DIR/$rel_path)
+                  cp $ko $MODPATH/system$MODULES_DIR/$rel_path
+                  ui_print "  Overlaid: $filename"
+              else
+                  cp $ko $MODPATH/system$MODULES_DIR/
+              fi
+          done
+          rm -rf $MODPATH/custom_ko
+          EOF
           
-          cd $GITHUB_WORKSPACE
-          
-          # إنشاء صورة ext4 القابلة للتفليش بحيث يحتوي مسار الجذر على lib/modules
-          mke2fs -t ext4 -d $GITHUB_WORKSPACE/vendor_dlkm_staging $GITHUB_WORKSPACE/FinalOutput/vendor_dlkm_custom.img 150M
+          cd $GITHUB_WORKSPACE/MagiskModule
+          zip -r9 $GITHUB_WORKSPACE/FinalOutput/OP9Pro-Kernel-Modules.zip .
 
       - name: Package Kernel into AnyKernel3 ZIP
         run: |
