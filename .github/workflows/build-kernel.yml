@@ -8,9 +8,9 @@ on:
   workflow_dispatch:
 
 env:
-  KERNEL_REPO: smualemi/android_kernel_oneplus_sm8350
+  KERNEL_REPO: ONETO91/android_kernel_oneplus_sm8350_op9
   KERNEL_BRANCH: oneplus/sm8350_u_14.0.0_oneplus9
-  DEVICE_TREE_REPO: smualemi/android_kernel_modules_and_devicetree_oneplus_sm8350
+  DEVICE_TREE_REPO: ONETO91/android_kernel_modules_and_devicetree_oneplus_sm8350_op9
   DEVICE_TREE_BRANCH: oneplus/sm8350_u_14.0.0_oneplus9
 
 jobs:
@@ -20,10 +20,10 @@ jobs:
 
     steps:
       - name: Checkout build scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Checkout kernel source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ env.KERNEL_REPO }}
           ref: ${{ env.KERNEL_BRANCH }}
@@ -243,7 +243,7 @@ jobs:
           cp vendor_boot_custom.img $GITHUB_WORKSPACE/FinalOutput/
 
       - name: Upload Final Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: OnePlus-9Pro-Complete-Package
           path: FinalOutput/*
