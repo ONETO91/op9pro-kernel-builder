@@ -1,4 +1,4 @@
-name: Build OnePlus 9 Pro Kernel & Modules
+name: Build OnePlus 9 Pro Kernel & Magisk Modules
 
 on:
   push:
@@ -48,7 +48,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             bc bison build-essential ccache curl flex git gnupg gperf \
             lib32ncurses5-dev lib32readline-dev lib32z1-dev libelf-dev \
-            libssl-dev lzop python3 python-is-python3 cpio dos2unix rsync zip unzip kmod
+            libssl-dev lzop python3 python-is-python3 cpio dos2unix rsync zip
 
       - name: Clone Toolchains
         run: |
@@ -71,7 +71,7 @@ jobs:
 
       - name: Allocate Swap Space
         run: |
-          sudo fallocate -l 10G /swapfile2 || sudo dd if=/dev/zero of=/swapfile2 bs=1M count=10240
+          sudo fallocate -l 10G /swapfile2
           sudo chmod 600 /swapfile2
           sudo mkswap /swapfile2
           sudo swapon /swapfile2
@@ -99,11 +99,6 @@ jobs:
           . ${ROOT_DIR}/kernel/msm-5.4/build.config.msm.lahaina
           function fix_localversion() {
               ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config --set-str LOCALVERSION "-qgki-gd2a1055adeb0"
-              
-              # تعطيل المتغيرات المتضاربة لتفادي Bootloop
-              ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config --disable CFS_BANDWIDTH
-              ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config --disable DRM_MSM_IRIS
-              
               (cd ${KERNEL_DIR} && make "${TOOL_ARGS[@]}" O=${OUT_DIR} ${MAKE_ARGS} olddefconfig)
           }
           append_cmd POST_DEFCONFIG_CMDS 'fix_localversion'
@@ -132,13 +127,12 @@ jobs:
           sed -i 's/echo "+"/echo ""/g' $GITHUB_WORKSPACE/kernel/msm-5.4/scripts/setlocalversion
 
           bash device/qcom/kernelscripts/build.sh LLVM=1 LLVM_IAS=1
-          
-      - name: Prepare FinalOutput Directory
-        run: mkdir -p $GITHUB_WORKSPACE/FinalOutput
 
-      - name: Build Module for Out-of-Tree Definitions
+      - name: Build Magisk Module for Out-of-Tree Modules
         run: |
+          mkdir -p $GITHUB_WORKSPACE/FinalOutput
           mkdir -p $GITHUB_WORKSPACE/MagiskModule/custom_ko
+          
           find $GITHUB_WORKSPACE/out -name "*.ko" -type f -exec cp {} $GITHUB_WORKSPACE/MagiskModule/custom_ko/ \;
           
           cat << 'EOF' > $GITHUB_WORKSPACE/MagiskModule/module.prop
@@ -147,103 +141,61 @@ jobs:
           version=v1.0
           versionCode=1
           author=CustomBuild
-          description=Systemlessly injects out-of-tree modules for the custom kernel.
+          description=Systemlessly injects matching out-of-tree modules (Display/Audio/WLAN) for the newly flashed custom kernel.
           EOF
           
           cat << 'EOF' > $GITHUB_WORKSPACE/MagiskModule/customize.sh
           ui_print "- Installing Custom Kernel Modules..."
-          MODULES_DIR="/vendor/lib/modules"
-          if [ ! -d "$MODULES_DIR" ]; then
+          MODULES_DIR=""
+          if [ -d "/vendor_dlkm/lib/modules" ]; then
               MODULES_DIR="/vendor_dlkm/lib/modules"
+          elif [ -d "/vendor/lib/modules" ]; then
+              MODULES_DIR="/vendor/lib/modules"
           fi
-          ui_print "- Target directory: $MODULES_DIR"
           
-          for ko in $(find $MODPATH/custom_ko -type f -name "*.ko"); do
-              filename=$(basename $ko)
-              sys_path=$(find $MODULES_DIR -type f -name "$filename" | head -n 1)
-              if [ -n "$sys_path" ]; then
-                  rel_path=${sys_path#$MODULES_DIR/}
-                  mkdir -p $(dirname $MODPATH/system$MODULES_DIR/$rel_path)
-                  cp $ko $MODPATH/system$MODULES_DIR/$rel_path
-                  ui_print "  Overlaid: $filename"
-              else
-                  cp $ko $MODPATH/system$MODULES_DIR/
-              fi
-          done
-          rm -rf $MODPATH/custom_ko
+          if [ -n "$MODULES_DIR" ]; then
+              ui_print "- Target modules directory: $MODULES_DIR"
+              for ko in $(find $MODPATH/custom_ko -type f -name "*.ko"); do
+                  filename=$(basename $ko)
+                  sys_path=$(find $MODULES_DIR -type f -name "$filename" | head -n 1)
+                  if [ -n "$sys_path" ]; then
+                      rel_path=${sys_path#$MODULES_DIR/}
+                      mkdir -p $(dirname $MODPATH/system$MODULES_DIR/$rel_path)
+                      cp $ko $MODPATH/system$MODULES_DIR/$rel_path
+                      ui_print "  Overlaid: $filename"
+                  else
+                      cp $ko $MODPATH/system$MODULES_DIR/
+                  fi
+              done
+              rm -rf $MODPATH/custom_ko
+          else
+              ui_print "! Could not find modules directory, installation aborted!"
+              exit 1
+          fi
           EOF
           
           cd $GITHUB_WORKSPACE/MagiskModule
-          zip -r9 $GITHUB_WORKSPACE/FinalOutput/OP9Pro-Kernel-Modules.zip .
+          zip -r9 $GITHUB_WORKSPACE/FinalOutput/OP9Pro-Kernel-Modules-Magisk.zip .
 
       - name: Package Kernel into AnyKernel3 ZIP
         run: |
-          RAW_IMAGE=$(find $GITHUB_WORKSPACE/out -type f -name "Image" | head -n 1)
-          if [ -z "$RAW_IMAGE" ]; then
-            echo "ERROR: Kernel image not found!"
+          RAW_IMAGE="$GITHUB_WORKSPACE/out/msm-5.4-lahaina-qgki-consolidate/dist/Image"
+          if [ ! -f "$RAW_IMAGE" ]; then
+            echo "ERROR: Kernel image not found at $RAW_IMAGE !"
             exit 1
           fi
+
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git $GITHUB_WORKSPACE/AnyKernel3
           cd $GITHUB_WORKSPACE/AnyKernel3
+
           rm -rf modules patch ramdisk README.md
-          cp $GITHUB_WORKSPACE/anykernel/anykernel.sh ./anykernel.sh || true
+          cp $GITHUB_WORKSPACE/anykernel/anykernel.sh ./anykernel.sh
           cp "$RAW_IMAGE" ./Image
+
           zip -r9 "$GITHUB_WORKSPACE/FinalOutput/OP9Pro-Custom-Kernel-AK3.zip" . -x '.git/*' -x '*.zip'
 
-      - name: Patch Stock vendor_boot.img with New Modules
-        run: |
-          echo "==> Preparing vendor_boot patcher..."
-          mkdir -p $GITHUB_WORKSPACE/vendor_boot_patch
-          cd $GITHUB_WORKSPACE/vendor_boot_patch
-          
-          unzip $GITHUB_WORKSPACE/stock_vendor_boot.zip
-          STOCK_IMG=$(find . -name "*.img" | head -n 1)
-          if [ -z "$STOCK_IMG" ]; then
-            echo "ERROR: No .img found in stock_vendor_boot.zip!"
-            exit 1
-          fi
-          
-          if [ "$STOCK_IMG" != "./vendor_boot.img" ] && [ "$STOCK_IMG" != "vendor_boot.img" ]; then
-            mv "$STOCK_IMG" vendor_boot.img
-          fi
-          
-          echo "==> Fetching official magiskboot from Magisk APK..."
-          wget -qO magisk.apk https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk
-          unzip -j magisk.apk "lib/x86_64/libmagiskboot.so" -d .
-          mv libmagiskboot.so magiskboot
-          chmod +x magiskboot
-          
-          echo "==> Unpacking vendor_boot.img..."
-          ./magiskboot unpack vendor_boot.img
-          
-          if [ ! -f "ramdisk.cpio" ]; then
-            echo "ERROR: magiskboot failed to extract ramdisk.cpio!"
-            exit 1
-          fi
-          
-          mkdir ramdisk_ext
-          cd ramdisk_ext
-          cpio -i < ../ramdisk.cpio
-          
-          echo "==> Replacing stock .ko modules with newly built ones..."
-          for ko in $(find $GITHUB_WORKSPACE/out -name "*.ko" -type f); do
-              filename=$(basename $ko)
-              target=$(find . -type f -name "$filename" | head -n 1)
-              if [ -n "$target" ]; then
-                  cp $ko $target
-                  echo "  [Updated] $filename -> $target"
-              fi
-          done
-          
-          find . | cpio -H newc -o > ../ramdisk.cpio
-          cd ..
-          
-          echo "==> Repacking vendor_boot_custom.img..."
-          ./magiskboot repack vendor_boot.img vendor_boot_custom.img
-          cp vendor_boot_custom.img $GITHUB_WORKSPACE/FinalOutput/
-
-      - name: Upload Final Artifacts
-        uses: actions/upload-artifact@v5
+      - name: Upload Kernel Artifacts
+        uses: actions/upload-artifact@v4
         with:
-          name: OnePlus-9Pro-Complete-Package
+          name: OnePlus-9Pro-Kernel-And-Modules
           path: FinalOutput/*
